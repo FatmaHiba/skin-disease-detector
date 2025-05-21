@@ -5,21 +5,29 @@ import torch.nn.functional as F
 import torchvision.transforms as transforms
 import joblib
 import numpy as np
-from utils.model_utils import create_model
+import sys
 import os
+sys.path.append(os.path.abspath(r"C:\Users\elwady\Downloads\skin_app (1)\skin_app"))
+
+from utils.model_utils import create_model
 
 app = Flask(__name__)
 
-# تحميل نموذج الجلد
-skin_model = joblib.load("skin_classifier_model.pkl")
+# محاولة تحميل نموذج الجلد
+try:
+    skin_model = joblib.load(r"C:\Users\elwady\Downloads\skin_app (1)\skin_app\skin_classifier_model.pkl")
+    skin_model_available = True
+except Exception as e:
+    print(f"تعذر تحميل نموذج الجلد: {e}")
+    skin_model = None
+    skin_model_available = False
 
 # تحميل نموذج التشخيص
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 disease_model = create_model(num_classes=10)
-disease_model.load_state_dict(torch.load("my_best_model.pth", map_location=device))
+disease_model.load_state_dict(torch.load(r"C:\Users\elwady\Downloads\skin_app (1)\skin_app\my_best_model.pth", map_location=device))
 disease_model.eval()
 
-# أسماء الأمراض
 disease_classes = [
     'Acne',
     'Actinic Keratosis',
@@ -32,6 +40,7 @@ disease_classes = [
     'Vascular Tumors',
     'Vitiligo'
 ]
+
 
 # التحويلات للصورة
 transform = transforms.Compose([
@@ -58,20 +67,33 @@ def predict():
     # مرحلة 1: كشف إذا كان جلد أو لا
     b, g, r = get_bgr_from_image(image)
     skin_pred = skin_model.predict([[b, g, r]])[0]
-    is_skin = int(skin_pred) == 1
+    if not is_skin:
+            return jsonify({"prediction": "not_skin"})
+        else:
+            accuracy = 0.83
 
-    result = {
-        "is_skin": is_skin,
-        "accuracy": 0.77,
-        "prediction": "not_skin"
+
+
+    # نكمل على التشخيص سواء استخدمنا كشف الجلد أو تخطيناه
+    image = image.convert("RGB")
+    img_tensor = transform(image).unsqueeze(0).to(device)
+    with torch.no_grad():
+        outputs = disease_model(img_tensor)
+        probs = F.softmax(outputs, dim=1)
+        pred_class = torch.argmax(probs, dim=1).item()
+        prediction = disease_classes[pred_class]
+        confidence = probs[0, pred_class].item()
+
+    response = {
+        "prediction": prediction,
+        "confidence": round(confidence, 4),
+        "skin_model_used": skin_model_available
     }
 
-    if is_skin:
-        img_tensor = transform(image).unsqueeze(0).to(device)
-        with torch.no_grad():
-            outputs = disease_model(img_tensor)
-            probs = F.softmax(outputs, dim=1)
-            pred_class = torch.argmax(probs, dim=1).item()
-            result["prediction"] = disease_classes[pred_class]
+    if accuracy is not None:
+        response["accuracy"] = accuracy
 
-    return jsonify(result)
+    return jsonify(response)
+    
+if __name__ == "__main__":
+    app.run(debug=True)    
